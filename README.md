@@ -183,70 +183,122 @@ secret redaction. They never contact
 Enegic. Simulated failures do not verify real timeout timing, Homey persistence,
 Flow execution, push delivery, or applied device settings.
 
-## API reference for future changes
+## API documentation
 
-The following calls are retained for future development. They are manual API
-examples; the read and mode calls are also part of the current automation. Replace
-`YOUR_TOKEN` only in your private tooling with a fresh token. Never share it.
-The examples use POSIX shell line continuations, as in the original calls;
-on Windows use equivalent PowerShell tooling/quoting.
+The scripts use `https://api.enegic.com` and make these five calls in order.
+The examples use POSIX shell line continuations; on Windows, use equivalent
+PowerShell quoting. Replace placeholders only in private tooling. Never publish
+credentials or authorization tokens.
 
-### Read current price-schema settings
+### 1. Create an authentication token
+
+`PUT /createtoken` has no authorization header. The request body contains the
+Enegic username and password:
 
 ```sh
 curl -X PUT \
-  'https://api.enegic.com/getreporterpriceschemasettings/' \
-  -H 'Content-Type: application/json' \
-  -H 'X-Authorization: YOUR_TOKEN' \
+   'https://api.enegic.com/createtoken' \
+   -H 'Content-Type: application/json' \
+   --data-raw '{"username":"YOUR_USERNAME","password":"YOUR_PASSWORD"}'
+```
+
+The script accepts a token at `TokenInfo.Token` or, for the original response
+shape, at the top-level `token`. It does not log the authentication response or
+persist the token; the token is sent as `X-Authorization` on calls 2 through 5.
+
+### 2. Read current price-schema settings
+
+`PUT /getreporterpriceschemasettings/` takes the reporter ID in `ItemId`:
+
+```sh
+curl -X PUT \
+   'https://api.enegic.com/getreporterpriceschemasettings/' \
+   -H 'Content-Type: application/json' \
+   -H 'X-Authorization: YOUR_TOKEN' \
    --data-raw '{"ItemId":"YOUR_REPORTER_ID"}'
 ```
 
-User-observed HTTP 200 JSON response:
+The response must be JSON with a non-empty `ChargingIntervals` array. The
+script snapshots the complete response so it can restore it if a later call
+fails. User-observed HTTP 200 response:
 
 ```json
 {
-  "MaxPrice": -1.0,
-  "MinPrice": -1.0,
-  "WantedHours": 4,
-  "PriceArea": "SE3",
-  "ChargingIntervals": [
-    { "StartCharging": "19:00", "EndCharging": "07:00" }
-  ],
-  "Inverted": false,
-  "SortDescending": false
+   "MaxPrice": -1.0,
+   "MinPrice": -1.0,
+   "WantedHours": 4,
+   "PriceArea": "SE3",
+   "ChargingIntervals": [
+      { "StartCharging": "19:00", "EndCharging": "07:00" }
+   ],
+   "Inverted": false,
+   "SortDescending": false
 }
 ```
 
-### Change mode
+### 3. Set price-schema settings
 
-**Executing this call changes live mode.** The scripts send it with
-`{"Mode":"Price","PreviousMode":"Price"}`. The original supplied request
-selected Open:
+`PUT /setreporterpriceschemasettings/` takes the reporter ID in `ItemId` and
+the settings as a JSON **string** in `Parameters` (not as a nested object):
 
 ```sh
 curl -X PUT \
-  'https://api.enegic.com/addupdatezaptecreporter' \
-  -H 'Content-Type: application/json' \
-  -H 'X-Authorization: YOUR_TOKEN' \
-  --data-raw '{
-   "ReporterId":"YOUR_REPORTER_ID",
-    "UserSettings":"{\"Mode\":\"Open\",\"PreviousMode\":\"Price\"}"
-  }'
+   'https://api.enegic.com/setreporterpriceschemasettings/' \
+   -H 'Content-Type: application/json' \
+   -H 'X-Authorization: YOUR_TOKEN' \
+   --data-raw '{
+      "ItemId":"YOUR_REPORTER_ID",
+      "Parameters":"{\"MaxPrice\":-1,\"MinPrice\":-1,\"WantedHours\":4,\"PriceArea\":\"SE3\",\"ChargingIntervals\":[{\"StartCharging\":\"19:00\",\"EndCharging\":\"07:00\"}],\"Inverted\":false,\"SortDescending\":false}"
+   }'
 ```
 
-The inverse payload below was inferred earlier, not independently verified:
+The `off` script uses `07:00` to `06:55` instead. User-observed success is
+HTTP 200 with an empty body; the scripts require that exact response.
 
-```json
-{
-   "ReporterId": "YOUR_REPORTER_ID",
-  "UserSettings": "{\"Mode\":\"Price\",\"PreviousMode\":\"Open\"}"
-}
+### 4. Recalculate the price schema
+
+`POST /calculatepriceschemas` recalculates charging times for the reporter:
+
+```sh
+curl -X POST \
+   'https://api.enegic.com/calculatepriceschemas' \
+   -H 'Content-Type: application/json' \
+   -H 'X-Authorization: YOUR_TOKEN' \
+   --data-raw '{"ReporterIds":["YOUR_REPORTER_ID"]}'
 ```
 
-`UserSettings` is a JSON string, not an object. The meaning/necessity of
-`PreviousMode` and the mode endpoint's response contract remain unverified;
-do not assume it checks the actual current mode or that HTTP 2xx proves the
-mode changed. Do not copy browser-specific headers into HomeyScript.
+User-observed success is HTTP 200 with body `[]`; the scripts require that
+exact response.
+
+### 5. Set reporter mode
+
+`PUT /addupdatezaptecreporter` changes the reporter's mode. The scripts send
+`UserSettings` as a JSON **string**:
+
+```sh
+curl -X PUT \
+   'https://api.enegic.com/addupdatezaptecreporter' \
+   -H 'Content-Type: application/json' \
+   -H 'X-Authorization: YOUR_TOKEN' \
+   --data-raw '{
+      "ReporterId":"YOUR_REPORTER_ID",
+      "UserSettings":"{\"Mode\":\"Price\",\"PreviousMode\":\"Price\"}"
+   }'
+```
+
+User-observed success is HTTP 200 with an empty body. The mode endpoint's
+response contract and the meaning/necessity of `PreviousMode` are unverified;
+do not assume HTTP 200 proves the mode changed. Do not copy browser-specific
+headers into HomeyScript.
+
+### Rollback behavior
+
+If call 4 or 5 fails, the script sends the complete snapshot from call 2 back
+through call 3, then calls endpoint 4 again. Rollback acceptance is also checked
+against the observed HTTP 200/empty-body and HTTP 200/`[]` responses. Mode is
+not rolled back. A failure can occur after Enegic has applied a change, so the
+actual settings remain unconfirmed until inspected in Perific. There are no
+retries.
 
 ## Research sources
 
@@ -258,5 +310,6 @@ mode changed. Do not copy browser-specific headers into HomeyScript.
 - [Advanced Flow error paths](https://homey.app/en-us/features/advanced-flow/)
 - [Native push notification Flow example](https://support.homey.app/hc/en-us/articles/18292876827548-Trigger-Flows-with-Webhooks)
 
-Enegic contracts above come from supplied calls and observed responses, not
-independently verified public API documentation.
+The Enegic request and response contracts above are based on research of the
+Perific web app and observed responses; they are not independently verified
+against public API documentation.
