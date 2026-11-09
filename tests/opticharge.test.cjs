@@ -77,9 +77,9 @@ function stageUrls(stage) {
   ];
 }
 
-for (const [file, startCharging, endCharging] of [
-  ['opticharge-off.js', '07:00', '06:55'],
-  ['opticharge-on.js', '19:00', '07:00'],
+for (const [file, startCharging, endCharging, wantedHours] of [
+  ['opticharge-weekend.js', '16:00', '15:55', 8],
+  ['opticharge-weekdays.js', '19:00', '07:00', 4],
 ]) {
   const source = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 
@@ -157,7 +157,7 @@ for (const [file, startCharging, endCharging] of [
       Parameters: JSON.stringify({
         MaxPrice: -1,
         MinPrice: -1,
-        WantedHours: 4,
+        WantedHours: wantedHours,
         PriceArea: 'SE3',
         ChargingIntervals: [{ StartCharging: startCharging, EndCharging: endCharging }],
         Inverted: false,
@@ -461,7 +461,13 @@ for (const [file, startCharging, endCharging] of [
     return patched;
   }
 
-  for (const [start, end] of [['19:00', '23:00'], ['22:00', '02:00'], ['00:00', '23:59']]) {
+  for (const [start, end] of [
+    ['16:00', '00:00'],
+    ['19:00', '03:00'],
+    ['22:00', '06:00'],
+    ['15:00', '23:00'],
+    ['00:00', '23:59'],
+  ]) {
     test(`${file}: accepts charging window ${start}-${end}`, async () => {
       const execution = run({ scriptSource: withWindow(start, end) });
       assert.equal(await execution.completion, true);
@@ -470,9 +476,10 @@ for (const [file, startCharging, endCharging] of [
   }
 
   for (const [start, end, expected] of [
-    ['19:00', '22:00', /charging period 3 h 0 min is shorter than WantedHours 4/],
-    ['23:00', '02:00', /charging period 3 h 0 min is shorter than WantedHours 4/],
-    ['19:00', '22:59', /charging period 3 h 59 min is shorter than WantedHours 4/],
+    ['19:00', '22:00', new RegExp(`charging period 3 h 0 min is shorter than WantedHours ${wantedHours}`)],
+    ['23:00', '02:00', new RegExp(`charging period 3 h 0 min is shorter than WantedHours ${wantedHours}`)],
+    ['19:00', '22:59', new RegExp(`charging period 3 h 59 min is shorter than WantedHours ${wantedHours}`)],
+    ['15:59', '07:00', /overnight charging period cannot start before 16:00/],
     ['07:00', '07:00', /charging period start and end must differ/],
     ['24:00', '07:00', /invalid charging period time "24:00"/],
     ['19:00', '7:00', /invalid charging period time "7:00"/],

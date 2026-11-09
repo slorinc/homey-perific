@@ -6,24 +6,24 @@ server is required.
 
 **Each run sets Perific to Price mode** (`Mode=Price`, `PreviousMode=Price`),
 as the Perific webapp does after saving a period.
-The off/on script names are retained for existing Flow selections, but no longer
-mean disabling/enabling OptiCharge.
 
 | HomeyScript | Charging window | Schedule (Homey's local timezone) |
 | --- | --- | --- |
-| [opticharge-off.js](./opticharge-off.js) | 07:00 to 06:55 (overnight) | Friday 19:00 |
-| [opticharge-on.js](./opticharge-on.js) | 19:00 to 07:00 (overnight) | Monday 07:00 |
+| [opticharge-weekend.js](./opticharge-weekend.js) | 16:00 to 15:55 (daily, five-minute gap) | Friday 16:00 |
+| [opticharge-weekdays.js](./opticharge-weekdays.js) | 19:00 to 07:00 (overnight) | Monday 07:00 |
 
 These are fixed presets: manual execution applies the script's preset regardless
-of the current day. The weekend preset leaves a five-minute daily gap.
+of the current day. The weekend interval starts at 16:00 because Perific's phone
+app rejects an earlier start when the interval extends over midnight.
 Each preset remains configured until another update; there is no day-of-week
 schedule inside the API payload.
 
-Both scripts also set `MaxPrice=-1`, `MinPrice=-1`, `WantedHours=4`,
-`PriceArea=SE3`, `Inverted=false`, and `SortDescending=false`.
+Both scripts also set `MaxPrice=-1`, `MinPrice=-1`, `PriceArea=SE3`,
+`Inverted=false`, and `SortDescending=false`. The weekend script sets
+`WantedHours=8`; the weekdays script sets `WantedHours=4`.
 These values intentionally overwrite the corresponding existing settings.
 The interval is a charging window, not a promise of continuous charging:
-`WantedHours` remains 4 and Perific still governs charging.
+Perific still governs when charging occurs within the window.
 
 Each preset's window (end minus start, wrapping past midnight) must be at least
 `WantedHours` long, and start and end must differ. Times must be `HH:MM`.
@@ -65,11 +65,12 @@ Clearing it makes both scripts fail before making any API call.
 
 ## 2. Install or replace both scripts
 
-Paste the contents of [opticharge-off.js](./opticharge-off.js) and
-[opticharge-on.js](./opticharge-on.js) into the corresponding saved HomeyScripts.
-Update existing saved scripts rather than deleting/recreating them, to preserve
-Flow selections. They contain HomeyScript top-level `await`/`return` and are not
-ordinary Node programs.
+Paste the contents of [opticharge-weekend.js](./opticharge-weekend.js) and
+[opticharge-weekdays.js](./opticharge-weekdays.js) into the corresponding saved
+HomeyScripts. Update existing saved scripts rather than deleting/recreating
+them, to preserve Flow selections, and update their names to match the new
+weekend/weekday roles. They contain HomeyScript top-level `await`/`return` and
+are not ordinary Node programs.
 
 Each successful run makes exactly five requests, mirroring the Perific webapp:
 
@@ -118,17 +119,17 @@ Keep the existing schedules, using two Advanced Flows or independent canvas path
 
 ### Friday: weekend charging period
 
-1. **When:** Date & Time -> the time is **19:00**.
+1. **When:** Date & Time -> the time is **16:00**.
 2. **And:** Date & Time -> the day is **Friday**.
-3. From **Yes**, add **Then:** HomeyScript -> **Run Script** -> the off script.
+3. From **Yes**, add **Then:** HomeyScript -> **Run Script** -> the weekend script.
 4. Connect the script card's **error output**, not normal completion, to
    **Then:** Notifications -> **Send a push notification**.
 5. Select **your own Homey user**, not every user. Suggested message:
-   `Charging: could not confirm the weekend period 07:00-06:55. Check Perific.`
+   `Charging: could not confirm the weekend period 16:00-15:55. Check Perific.`
 
 ### Monday: weekday charging period
 
-Repeat with **07:00**, **Monday**, and the on script. Suggested error message:
+Repeat with **07:00**, **Monday**, and the weekdays script. Suggested error message:
 `Charging: could not confirm the weekday period 19:00-07:00. Check Perific.`
 
 Update old mode-related notification text. If your error branch provides an
@@ -252,8 +253,9 @@ curl -X PUT \
    }'
 ```
 
-The `off` script uses `07:00` to `06:55` instead. User-observed success is
-HTTP 200 with an empty body; the scripts require that exact response.
+The weekend script uses `16:00` to `15:55` and `WantedHours=8` instead.
+User-observed success is HTTP 200 with an empty body; the scripts require that
+exact response.
 
 ### 4. Recalculate the price schema
 

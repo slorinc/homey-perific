@@ -1,5 +1,5 @@
-const START_CHARGING = '07:00';
-const END_CHARGING = '06:55';
+const START_CHARGING = '19:00';
+const END_CHARGING = '07:00';
 const WANTED_HOURS = 4;
 const config = global.get('enegic.opticharge');
 
@@ -29,7 +29,12 @@ function minutes(time) {
   return Number(match[1]) * 60 + Number(match[2]);
 }
 
-const windowMinutes = (minutes(END_CHARGING) - minutes(START_CHARGING) + 1440) % 1440;
+const startMinutes = minutes(START_CHARGING);
+const endMinutes = minutes(END_CHARGING);
+if (endMinutes < startMinutes && startMinutes < 16 * 60) {
+  fail('overnight charging period cannot start before 16:00');
+}
+const windowMinutes = (endMinutes - startMinutes + 1440) % 1440;
 if (windowMinutes === 0) {
   fail('charging period start and end must differ');
 }
